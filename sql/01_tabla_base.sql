@@ -1,32 +1,23 @@
--- =============================================================================
 -- 01_tabla_base.sql
--- Tabla base del modelo: UNA FILA POR CLIENTE con su primera compra,
--- la etiqueta de recompra a 60 días y variables disponibles al momento
--- de la primera compra (sin fuga de información).
+-- Tabla base: una fila por cliente con su primera compra, la etiqueta de recompra
+-- a 60 dias y variables que se conocen en el momento de esa primera compra.
 --
--- Parámetros (query parameters de BigQuery):
---   @fecha_corte        DATE           Fecha hasta la que "conocemos" los datos (exclusiva).
---   @ventana_dias       INT64          Ventana de recompra (60).
---   @estados_excluidos  ARRAY<STRING>  Estados que NO cuentan como compra (['Cancelled']).
+-- Parametros:
+--   @fecha_corte        DATE           hasta donde "conozco" los datos (exclusiva)
+--   @ventana_dias       INT64          60
+--   @estados_excluidos  ARRAY<STRING>  ['Cancelled']
 --
--- Ejecución desde el notebook: se pasan los parámetros y el resultado se escribe
--- con WRITE_TRUNCATE en <dataset_candidata>.base_recompra_60d (idempotente).
--- Desde la consola: reemplazar @fecha_corte por DATE '2025-02-15',
--- @ventana_dias por 60 y @estados_excluidos por ['Cancelled'].
+-- El notebook pasa los parametros y guarda el resultado en tais_arrunategui.base_recompra_60d
+-- con WRITE_TRUNCATE. Para probarlo en la consola: @fecha_corte -> DATE '2025-02-15',
+-- @ventana_dias -> 60, @estados_excluidos -> ['Cancelled'].
 --
--- Nivel de detalle y claves de cruce
---   users        (1 fila por id)        --user_id-->   orders (1 fila por order_id)
---   orders       (1 fila por order_id)  --order_id-->  order_items (1 fila por ítem)
---   order_items  (1 fila por ítem)      --product_id-> products (1 fila por id)
---   events       (1 fila por evento)    --user_id-->   cliente
---   Regla: toda tabla de mayor detalle (ítems, eventos) se AGREGA a nivel orden
---   o cliente ANTES de unirse. Así ningún join duplica clientes.
+-- Granularidad:
+--   users (1 x id) -> orders (1 x order_id) -> order_items (1 x item) -> products (1 x id)
+--   events (1 x evento), se cruza por user_id
+-- order_items y events se agregan ANTES de unir; si no, los joins multiplican clientes.
 --
--- Convención de columnas
---   sin prefijo  -> variables del modelo (conocidas en la primera compra)
---   aux_*        -> columnas de análisis/auditoría. NUNCA son variables del modelo
---                   porque contienen información posterior a la primera compra.
--- =============================================================================
+-- Las columnas aux_* son solo para analisis. Tienen info posterior a la primera compra,
+-- asi que no entran al modelo.
 WITH
 params AS (
   SELECT
@@ -34,7 +25,7 @@ params AS (
     TIMESTAMP_SUB(TIMESTAMP(@fecha_corte), INTERVAL @ventana_dias DAY) AS limite_observable_ts
 ),
 
--- 1) Usuarios: 1 fila por id (deduplicación defensiva)
+-- 1) usuarios, dedup por si acaso
 usuarios AS (
   SELECT
     id              AS user_id,
@@ -48,11 +39,8 @@ usuarios AS (
   QUALIFY ROW_NUMBER() OVER (PARTITION BY id ORDER BY created_at) = 1
 ),
 
--- 2) Órdenes válidas: 1 fila por order_id
---    - sin claves nulas
---    - sin estados excluidos (Cancelled no es una compra)
---    - solo lo observado ANTES de la fecha de corte (descarta fechas futuras)
---    - solo de usuarios existentes (descarta órdenes huérfanas)
+-- 2) ordenes validas: claves no nulas, sin canceladas, antes del corte
+--    (esto saca tambien cualquier fecha futura) y con usuario existente
 ordenes AS (
   SELECT
     o.order_id,
@@ -69,8 +57,7 @@ ordenes AS (
   QUALIFY ROW_NUMBER() OVER (PARTITION BY o.order_id ORDER BY o.created_at) = 1
 ),
 
--- 3) Numeración de órdenes por cliente. Desempate por order_id si hay
---    dos órdenes con el mismo timestamp, para que el resultado sea determinista.
+-- 3) numero las ordenes de cada cliente. si dos tienen el mismo timestamp desempato por order_id
 ordenes_numeradas AS (
   SELECT
     order_id,
@@ -89,9 +76,8 @@ primera AS (
   WHERE n_orden = 1
 ),
 
--- 4) Etiqueta: ¿existe OTRA ORDEN válida en (primera compra, primera compra + ventana]?
---    Se cuenta a nivel de ORDEN (orders), nunca de ítems: los ítems de una misma
---    orden no son recompras.
+-- 4) etiqueta: hay otra orden valida en (primera compra, primera compra + ventana]?
+--    se cuentan ordenes, no items (varios items de la misma orden no son recompra)
 recompras AS (
   SELECT
     p.user_id,
@@ -105,7 +91,7 @@ recompras AS (
   GROUP BY p.user_id
 ),
 
--- 5) Ítems de la PRIMERA orden (filtrados temprano: solo las órdenes que importan)
+-- 5) items solo de las primeras ordenes. filtrar aca antes de agregar ahorra bastante
 items_primera_orden AS (
   SELECT
     oi.order_id,
@@ -124,7 +110,7 @@ productos AS (
   QUALIFY ROW_NUMBER() OVER (PARTITION BY id ORDER BY id) = 1
 ),
 
--- 5a) Canasta agregada a nivel ORDEN (1 fila por order_id)
+-- 5a) canasta de la primera orden
 canasta AS (
   SELECT
     i.order_id,
@@ -140,7 +126,7 @@ canasta AS (
   GROUP BY i.order_id
 ),
 
--- 5b) Categoría principal de la primera orden = la de mayor monto (1 fila por order_id)
+-- 5b) categoria principal = la de mayor monto dentro de la orden
 categoria_principal AS (
   SELECT
     order_id,
@@ -155,8 +141,8 @@ categoria_principal AS (
   QUALIFY ROW_NUMBER() OVER (PARTITION BY order_id ORDER BY monto DESC, category) = 1
 ),
 
--- 6) Navegación web ANTERIOR a la primera compra (1 fila por cliente).
---    El filtro e.created_at < primera_compra_ts es el que evita la fuga.
+-- 6) navegacion ANTES de la primera compra.
+--    ojo: el filtro e.created_at < primera_compra_ts es el que evita la fuga
 eventos_previos AS (
   SELECT
     e.user_id,
@@ -173,9 +159,9 @@ eventos_previos AS (
   GROUP BY e.user_id
 )
 
--- 7) Tabla final: 1 fila por cliente
+-- 7) final
 SELECT
-  -- Identificación y contexto
+  -- id y contexto
   p.user_id,
   p.primera_order_id,
   p.primera_compra_ts,
@@ -183,28 +169,27 @@ SELECT
   @fecha_corte                                                AS fecha_corte,
   @ventana_dias                                               AS ventana_dias,
 
-  -- Conjunto: solo los clientes con la ventana COMPLETA observada tienen etiqueta.
-  -- Los demás (primera compra en los últimos @ventana_dias días) se puntúan.
+  -- solo tiene etiqueta quien ya cumplio la ventana completa; el resto se puntua (scoring)
   IF(p.primera_compra_ts <= params.limite_observable_ts, 'entrenamiento', 'scoring')
                                                               AS conjunto,
 
-  -- Etiqueta (NULL en scoring: aún no sabemos si recomprarán)
+  -- en scoring queda NULL, todavia no se sabe
   IF(p.primera_compra_ts <= params.limite_observable_ts,
      IF(COALESCE(r.n_ordenes_en_ventana, 0) > 0, 1, 0),
      NULL)                                                    AS recompra_60d,
 
-  -- Variables del cliente (conocidas al registrarse)
+  -- cliente
   u.age                                                       AS edad,
   u.gender                                                    AS genero,
   u.country                                                   AS pais,
   u.traffic_source                                            AS canal_adquisicion,
   DATE_DIFF(DATE(p.primera_compra_ts), DATE(u.registro_ts), DAY) AS dias_registro_a_compra,
 
-  -- Variables de calendario de la primera compra
+  -- calendario
   EXTRACT(MONTH FROM p.primera_compra_ts)                     AS mes_primera_compra,
   EXTRACT(DAYOFWEEK FROM p.primera_compra_ts)                 AS dia_semana_primera_compra,
 
-  -- Variables de la canasta de la primera orden
+  -- canasta
   c.n_items,
   c.n_productos,
   c.monto_total,
@@ -215,14 +200,14 @@ SELECT
   cp.categoria_principal,
   cp.departamento_principal,
 
-  -- Variables de navegación previa a la compra
+  -- navegacion previa
   COALESCE(ev.n_eventos_previos, 0)                           AS n_eventos_previos,
   COALESCE(ev.n_sesiones_previas, 0)                          AS n_sesiones_previas,
   COALESCE(ev.n_vistas_producto, 0)                           AS n_vistas_producto,
   COALESCE(ev.n_eventos_carrito, 0)                           AS n_eventos_carrito,
   ev.dias_primer_evento_a_compra,
 
-  -- Columnas auxiliares (NO son variables del modelo)
+  -- auxiliares, NO van al modelo
   TIMESTAMP_DIFF(params.corte_ts, p.primera_compra_ts, DAY)   AS aux_dias_observados,
   IF(COALESCE(r.n_ordenes_en_ventana, 0) > 0, 1, 0)           AS aux_ya_recompro_al_corte,
   TIMESTAMP_DIFF(r.segunda_orden_ts, p.primera_compra_ts, DAY) AS aux_dias_a_segunda_orden

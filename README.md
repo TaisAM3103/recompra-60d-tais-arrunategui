@@ -1,69 +1,61 @@
-# Recompra a 60 días — The Look eCommerce
-**Caso práctico Machine Learning Engineer · Tais Lisette Arrunátegui Matos**
+# Recompra a 60 días - The Look eCommerce
 
-Identifica a los clientes con alta probabilidad de hacer una **nueva orden en los 60 días siguientes a su primera
-compra**, desde la preparación de datos en BigQuery hasta las predicciones listas para negocio y la arquitectura
-para producción en AWS.
+Caso práctico para el proceso de Machine Learning Engineer. Autora: **Tais Arrunátegui Matos**.
 
-## Estructura
+El objetivo es identificar, al momento de su primera compra, qué clientes tienen más probabilidad de hacer una nueva orden en los 60 días siguientes. Incluye la preparación de datos en BigQuery, el modelo, las predicciones y una propuesta de cómo llevarlo a producción en AWS.
+
+## Qué hay en el repo
+
 ```
 sql/
-  00a_calidad_fuentes.sql        Controles de calidad de las tablas fuente
-  00b_estados_y_fechas.sql       Distribución de estados de orden y rango de fechas
-  01_tabla_base.sql              Tabla base: 1 fila por cliente, etiqueta sin fuga (parametrizada)
-  02_validacion_tabla_base.sql   Controles sobre la tabla base (críticos detienen el proceso)
+  00a_calidad_fuentes.sql        controles de calidad de las tablas fuente
+  00b_estados_y_fechas.sql       estados de orden y rango de fechas
+  01_tabla_base.sql              tabla base (1 fila por cliente), parametrizada
+  02_validacion_tabla_base.sql   controles sobre la tabla base
 notebooks/
-  recompra_60d.ipynb             Pipeline completo: calidad → tabla base → EDA → modelo → predicciones
+  recompra_60d.ipynb             todo el flujo, ejecutado y con resultados
 docs/
-  arquitectura.md                Diseño AWS, Snowflake y optimización
-  arquitectura_aws.png / .dot    Diagrama
-models/modelo_recompra_60d.joblib   Modelo + transformaciones (se genera al ejecutar)
+  arquitectura.md                propuesta en AWS + Snowflake
+  arquitectura_aws.png
+models/
+  modelo_recompra_60d.joblib     modelo + preprocesamiento
 outputs/
-  predicciones_muestra.csv       user_id, probabilidad de recompra, decil y acción
-  predicciones_YYYYMMDD.csv      Predicciones completas de la fecha de corte
-  metricas.json                  Métricas de evaluación
-  figuras/                       Gráficos del análisis y del modelo
+  predicciones_muestra.csv       muestra: user_id, probabilidad, decil y acción
+  predicciones_20250215.csv      predicciones completas para el corte 15/02/2025
+  metricas.json
+  figuras/
 ```
 
-## Cómo ejecutar
-**Google Colab**
-1. Abrir `notebooks/recompra_60d.ipynb` en Colab (o el enlace de lectura compartido).
-2. *Entorno de ejecución → Ejecutar todo*. La primera celda pide autenticarse con la cuenta que tiene acceso a
-   `bussiness-case-tyc` y clona este repositorio para leer los `.sql`.
+## Cómo correrlo
 
-**Local**
+En **Colab**: abrir `notebooks/recompra_60d.ipynb` y usar *Entorno de ejecución → Ejecutar todo*. Pide iniciar sesión con una cuenta que tenga acceso a `bussiness-case-tyc` y clona este repo para leer los `.sql`.
+
+En **local**:
 ```bash
 pip install -r requirements.txt
 gcloud auth application-default login
-jupyter notebook notebooks/recompra_60d.ipynb    # Kernel → Restart & Run All
+jupyter notebook notebooks/recompra_60d.ipynb
 ```
 
-**Solo SQL (consola de BigQuery):** `00a` y `00b` se ejecutan tal cual. Para `01`, reemplazar
-`@fecha_corte` por `DATE '2025-02-15'`, `@ventana_dias` por `60` y `@estados_excluidos` por `['Cancelled']`.
+Los `.sql` también se pueden pegar directo en la consola de BigQuery. `00a`, `00b` y `02` corren tal cual. En `01` hay que reemplazar los parámetros: `@fecha_corte` por `DATE '2025-02-15'`, `@ventana_dias` por `60` y `@estados_excluidos` por `['Cancelled']`.
 
-Toda la configuración está en la celda `CONFIG` (fecha de corte, ventana, estados excluidos, fracción de test,
-capacidad de campaña, dataset destino). Re-ejecutar con la misma fecha de corte **no duplica resultados**: la tabla
-base se reemplaza y las predicciones reemplazan solo su partición.
+Todo se controla desde la celda `CONFIG` del notebook. El notebook escribe en el dataset `tais_arrunategui` (la tabla base y las predicciones), y se puede volver a correr con la misma fecha de corte sin duplicar resultados.
 
-## Dependencias
-Python 3.10+, `google-cloud-bigquery`, `db-dtypes`, `pandas`, `scikit-learn`, `matplotlib`, `joblib` (ver
-`requirements.txt`). Acceso de lectura al dataset `bussiness-case-tyc.bussiness_case_ecommerce` y de escritura al
-dataset `tais_arrunategui` (el notebook lo crea si no existe).
+## Decisiones principales
 
-## Supuestos y decisiones
-| Tema | Decisión |
-|---|---|
-| Compra válida | Toda orden excepto `Cancelled`. `Returned` cuenta: hubo decisión de compra. |
-| Primera compra | Primera orden válida por `created_at`; desempate por `order_id`. |
-| Recompra | Otra orden válida en (primera compra, primera compra + 60 días]. Se cuenta por **orden**, no por ítem. |
-| Fecha de corte | Exclusiva. Por defecto, el 1er día del mes de la última orden observada; configurable. Descarta fechas futuras. |
-| Clientes sin 60 días de historia | Sin etiqueta (no se entrenan); se puntúan como clientes a contactar. |
-| Fuga de información | Solo variables conocidas en la primera compra (lista blanca). Excluidos: estado de la orden, fechas de envío/entrega/devolución, eventos posteriores. |
-| Validación | Split temporal (cohortes recientes como test) con hueco de 60 días entre train y test. |
-| Métricas | PR AUC (clase minoritaria) + precision, recall, F1 y lift en el top 20% contactable. |
-| Referencia | Tasa histórica de recompra del segmento canal × departamento. |
-| Tablas no usadas | `distribution_centers` e `inventory_items`: no aportan información disponible al momento de la primera compra. |
+- **Compra válida:** cualquier orden menos `Cancelled`. Las `Returned` sí cuentan, porque la devolución pasa después y no se conoce al momento de predecir.
+- **Recompra:** otra orden válida dentro de (primera compra, primera compra + 60 días]. Cuento órdenes, no ítems.
+- **Fecha de corte:** 15/02/2025, el día siguiente a la última orden del dataset.
+- **Clientes con menos de 60 días al corte:** no entran al entrenamiento (su etiqueta está incompleta), pero son los que se puntúan.
+- **Sin fuga de información:** solo variables conocidas en la primera compra. Fuera el estado de la orden, las fechas de envío, entrega y devolución, y la navegación posterior.
+- **Evaluación:** split temporal con 60 días de separación entre train y test. PR AUC como métrica principal, más precision, recall y lift en el top 20%.
 
-## Limitaciones
-Datos sintéticos; el modelo predice quién recompra, no quién recompra *por* la campaña (eso requiere grupo de
-control y modelo de uplift); una sola fecha de corte evaluada.
+## Resultados en corto
+
+- 72.027 clientes con primera compra; 63.538 con la ventana completa para entrenar y 8.489 para puntuar.
+- Recompra a 60 días: 6,3% en promedio, aunque sube fuerte en 2024 (ver notebook).
+- Logística y gradient boosting empatan (PR AUC ~0,22 contra 0,13 de la referencia). Contactando al 20% con mayor score se encuentra al 36% de los que recompran.
+
+## Pendientes / limitaciones
+
+Los datos son sintéticos, la evaluación usa una sola fecha de corte y el modelo predice quién recompra, no quién recompra por efecto de una campaña. Para lo último haría falta un piloto con grupo de control y luego un modelo de uplift.

@@ -1,0 +1,42 @@
+{
+  "fecha_corte": "2025-02-15",
+  "modelo": "Gradient boosting",
+  "version": "hgb_20250215",
+  "tasa_recompra_entrenamiento": 0.06323774748969122,
+  "test": {
+    "Referencia (segmento)": {
+      "pr_auc": 0.1294,
+      "roc_auc": 0.507,
+      "prevalencia": 0.1276,
+      "precision_top20": 0.1098,
+      "recall_top20": 0.1721,
+      "f1_top20": 0.134,
+      "lift_top20": 0.8604
+    },
+    "Regresi\u00f3n log\u00edstica": {
+      "pr_auc": 0.2187,
+      "roc_auc": 0.7023,
+      "prevalencia": 0.1276,
+      "precision_top20": 0.238,
+      "recall_top20": 0.3732,
+      "f1_top20": 0.2907,
+      "lift_top20": 1.8658
+    },
+    "Gradient boosting": {
+      "pr_auc": 0.2201,
+      "roc_auc": 0.6953,
+      "prevalencia": 0.1276,
+      "precision_top20": 0.2305,
+      "recall_top20": 0.3615,
+      "f1_top20": 0.2815,
+      "lift_top20": 1.8072
+    }
+  },
+  "pr_auc_ic90": {
+    "Referencia (segmento)": "[0.123, 0.136]",
+    "Regresi\u00f3n log\u00edstica": "[0.206, 0.232]",
+    "Gradient boosting": "[0.207, 0.233]"
+  },
+  "captura_top_capacidad": 0.36150524367674275,
+  "clientes_scoring": 8489
+}

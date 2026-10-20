@@ -1,11 +1,6 @@
--- =============================================================================
 -- 00b_estados_y_fechas.sql
--- Distribución de estados de orden y rango de fechas.
--- Sirve para decidir (y justificar) qué estados cuentan como compra
--- y qué fecha de corte usar.
---
--- Cómo ejecutar: tal cual en la consola de BigQuery (no usa parámetros).
--- =============================================================================
+-- Estados de orden y rango de fechas. Con esto decidi que estados cuentan
+-- como compra y que fecha de corte usar.
 SELECT
   status,
   COUNT(*)                                                AS n_ordenes,

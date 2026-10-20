@@ -1,12 +1,6 @@
--- =============================================================================
 -- 02_validacion_tabla_base.sql
--- Controles sobre la tabla base ya construida.
---   severidad 'critico'     -> si falla, el notebook DETIENE el proceso.
---   severidad 'advertencia' -> se reporta, pero no detiene.
---
--- Cómo ejecutar: tal cual en la consola, luego de crear la tabla base
--- (ajustar el nombre del dataset de la candidata si cambia).
--- =============================================================================
+-- Controles sobre la tabla base ya creada. Si falla uno 'critico' el notebook se detiene;
+-- las advertencias solo se reportan.
 WITH
 b AS (
   SELECT * FROM `bussiness-case-tyc.tais_arrunategui.base_recompra_60d`
