@@ -1,0 +1,61 @@
+// Arquitectura AWS - Recompra a 60 días
+// Generar PNG: dot -Tpng docs/arquitectura_aws.dot -o docs/arquitectura_aws.png
+digraph G {
+  rankdir=TB; newrank=true;
+  graph [fontname="Helvetica", fontsize=13, bgcolor="#fcfcfb", pad=0.3, nodesep=0.35, ranksep=0.55,
+         label="Recompra a 60 días · Arquitectura en AWS (Tais Arrunátegui)", labelloc=t, fontcolor="#0b0b0b"];
+  node  [fontname="Helvetica", fontsize=11, shape=box, style="rounded,filled", fillcolor="#ffffff",
+         color="#52514e", fontcolor="#0b0b0b", margin="0.15,0.08"];
+  edge  [color="#52514e", fontname="Helvetica", fontsize=9, fontcolor="#52514e", arrowsize=0.7];
+
+  subgraph cluster_datos {
+    label="1. Datos"; style="rounded,filled"; fillcolor="#eaf2fc"; color="#2a78d6"; fontcolor="#2a78d6";
+    s3raw   [label="S3 raw\n(orders, order_items, users,\nproducts, events)"];
+    catalog [label="Glue Data Catalog\n+ Glue Data Quality"];
+    athena  [label="Athena (SQL)\ncalidad + tabla base\n(mismo SQL del notebook)"];
+    s3cur   [label="S3 curated\nParquet particionado\npor fecha_corte"];
+    s3raw -> catalog -> athena -> s3cur;
+    {rank=same; s3raw; catalog; athena; s3cur;}
+  }
+
+  subgraph cluster_ml {
+    label="2. Ejecución programada (SageMaker Pipelines)"; style="rounded,filled"; fillcolor="#fdeee8"; color="#eb6834"; fontcolor="#c9501f";
+    sched  [label="EventBridge Scheduler\n(mensual, día 1)", shape=box];
+    valid  [label="Validar datos\n(controles críticos)"];
+    train  [label="Entrenar y evaluar\nsplit temporal"];
+    gate   [label="¿PR AUC ≥ modelo\nen producción?", shape=diamond, fillcolor="#fff7e0"];
+    reg    [label="Model Registry\n(versión aprobada)"];
+    batch  [label="Batch scoring\nclientes con ventana abierta"];
+    sched -> valid -> train -> gate;
+    {rank=same; sched; valid; train; gate; reg; batch;}
+    gate -> reg   [label="sí"];
+    reg -> batch;
+    gate -> batch [xlabel="no: mantiene\nversión anterior", style=dashed, constraint=false];
+  }
+
+  subgraph cluster_neg {
+    label="3. Consumo de negocio"; style="rounded,filled"; fillcolor="#e6f6ef"; color="#1baf7a"; fontcolor="#13805a";
+    s3pred [label="S3 predicciones\n(partición fecha_corte,\nreemplazo idempotente)"];
+    snow   [label="Snowflake\n(Snowpipe / External Table)\nvista para CRM y BI"];
+    crm    [label="CRM / campañas\nQuickSight o BI del cliente"];
+    s3pred -> snow -> crm;
+    {rank=same; s3pred; snow; crm;}
+  }
+
+  subgraph cluster_ops {
+    label="4. Monitoreo y versionamiento"; style="rounded,filled"; fillcolor="#f1f0ed"; color="#52514e"; fontcolor="#52514e";
+    gh   [label="GitHub\n(SQL, notebook, IaC)"];
+    gha  [label="GitHub Actions\ntests + Terraform\ndespliega el pipeline"];
+    cw   [label="CloudWatch + SNS\nalertas: calidad de datos,\ndrift y fallas de ejecución"];
+    mon  [label="Monitoreo del modelo\nPR AUC real cuando cierra\nla ventana de 60 días"];
+    gh -> gha;
+    cw -> mon [style=invis];
+    {rank=same; gh; gha; cw; mon;}
+  }
+
+  // Alineación: cada bloque es una fila, todas empiezan a la izquierda
+  s3raw -> sched -> s3pred -> gh [style=invis];
+
+  s3cur -> valid  [constraint=false];
+  batch -> s3pred [constraint=false];
+}
